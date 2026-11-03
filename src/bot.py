@@ -29,7 +29,7 @@ from src.dashboard import get_system_dashboard, check_internet_latency
 from src.terminal import run_terminal_command, format_command_output
 from src.screen import capture_desktop_screenshot
 from src.projects import list_projects, scaffold_project
-from src.ai_service import ask_gemini
+from src.ai_service import ask_gemini, reset_conversation
 from src.keyboards import (
     get_main_keyboard,
     get_projects_keyboard,
@@ -91,7 +91,7 @@ async def cb_refresh_status(callback: CallbackQuery):
         await callback.message.edit_text(
             dashboard, reply_markup=get_main_keyboard(), parse_mode="HTML"
         )
-        await callback.answer("⚡ Статус обновлен!")
+        await callback.answer("⚡ Refresh complete!")
     except Exception:
         await callback.answer("Данные актуальны")
 
@@ -107,15 +107,33 @@ async def cb_back_to_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@dp.message(Command("new_chat"))
+@dp.callback_query(F.data == "new_conversation")
+async def handle_new_conversation(event: Message | CallbackQuery):
+    """Reset AI conversation history for fresh chat."""
+    user = event.from_user
+    cleared = reset_conversation(user.id)
+    text = (
+        "✨ <b>New Conversation</b>\n\n"
+        f"История диалога очищена ({cleared} сообщ.). Контекст обновлен.\n"
+        "Задавай новый вопрос или ставь задачу — агент готов с чистого листа!"
+    )
+    if isinstance(event, CallbackQuery):
+        await event.answer("💬 Новый диалог начат!")
+        await event.message.answer(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+    else:
+        await event.answer(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+
+
 @dp.message(Command("screen"))
 @dp.callback_query(F.data == "take_screenshot")
 async def handle_screenshot(event: Message | CallbackQuery):
     """Capture screen and send photo."""
     message = event if isinstance(event, Message) else event.message
     if isinstance(event, CallbackQuery):
-        await event.answer("📸 Делаю скриншот...")
+        await event.answer("📸 Снимаю экран...")
 
-    wait_msg = await message.answer("⏳ <i>Снимаю скриншот экрана...</i>", parse_mode="HTML")
+    wait_msg = await message.answer("⏳ <i>Делаю снимок экрана ноутбука...</i>", parse_mode="HTML")
     try:
         img_bytes, caption = capture_desktop_screenshot()
         photo = BufferedInputFile(img_bytes, filename="screen.jpg")
@@ -134,7 +152,7 @@ async def cmd_terminal(message: Message):
             "💻 <b>Консоль ноутбука</b>\n\n"
             "Использование: <code>/cmd &lt;команда&gt;</code>\n"
             "Пример:\n"
-            "• <code>/cmd dir</code>\n"
+            "• <code>/cmd dir \"D:\\Orbital Bridge\"</code>\n"
             "• <code>/cmd git status</code>\n"
             "• <code>/cmd python --version</code>",
             parse_mode="HTML",
@@ -143,7 +161,7 @@ async def cmd_terminal(message: Message):
 
     command = parts[1].strip()
     status_msg = await message.answer(f"⏳ <i>Выполняю:</i> <code>{command}</code>...", parse_mode="HTML")
-    result = await run_terminal_command(command)
+    result = await run_terminal_command(command, cwd=str(PROJECTS_DIR))
     formatted = format_command_output(command, result)
     await status_msg.edit_text(formatted, parse_mode="HTML")
 
@@ -151,11 +169,11 @@ async def cmd_terminal(message: Message):
 @dp.message(Command("projects"))
 @dp.callback_query(F.data == "list_projects")
 async def handle_projects(event: Message | CallbackQuery):
-    """List projects."""
+    """List projects in D:\\Orbital Bridge."""
     projects = list_projects()
     text = (
         f"📁 <b>Каталог проектов:</b> <code>{PROJECTS_DIR}</code>\n"
-        f"Найдено проектов: <b>{len(projects)}</b>\n\n"
+        f"Найдено папок/проектов: <b>{len(projects)}</b>\n\n"
         "Нажми на проект для подробностей или создай новый:"
     )
     keyboard = get_projects_keyboard(projects)
@@ -175,7 +193,10 @@ async def cb_project_info(callback: CallbackQuery):
         await callback.answer("Папка не найдена", show_alert=True)
         return
 
-    files = [f.name for f in target_dir.iterdir()][:15]
+    try:
+        files = [f.name for f in target_dir.iterdir()][:20]
+    except Exception:
+        files = []
     has_git = (target_dir / ".git").exists()
     git_str = "Да (репозиторий инициализирован)" if has_git else "Нет"
 
@@ -183,7 +204,7 @@ async def cb_project_info(callback: CallbackQuery):
         f"📂 <b>Проект:</b> <code>{proj_name}</code>\n"
         f"📍 <b>Путь:</b> <code>{target_dir}</code>\n"
         f"🐙 <b>Git:</b> {git_str}\n\n"
-        f"<b>Файлы в корне:</b>\n" + "\n".join(f"• <code>{f}</code>" for f in files)
+        f"<b>Файлы:</b>\n" + ("\n".join(f"• <code>{f}</code>" for f in files) if files else "<i>(пусто)</i>")
     )
     await callback.message.edit_text(text, reply_markup=get_back_keyboard(), parse_mode="HTML")
     await callback.answer()
@@ -194,8 +215,8 @@ async def cb_prompt_new_project(callback: CallbackQuery, state: FSMContext):
     """Prompt user for new project name."""
     await state.set_state(NewProjectStates.waiting_for_name)
     await callback.message.edit_text(
-        "➕ <b>Создание нового проекта</b>\n\n"
-        "Отправь в ответном сообщении название проекта (например, <code>my-service</code> или <code>bot-v2</code>):",
+        f"➕ <b>New Project в <code>{PROJECTS_DIR}</code></b>\n\n"
+        "Отправь в ответном сообщении название проекта (например, <code>api-service</code> или <code>analyzer</code>):",
         reply_markup=get_back_keyboard(),
         parse_mode="HTML",
     )
@@ -208,7 +229,7 @@ async def process_project_name(message: Message, state: FSMContext):
     name = message.text.strip().replace(" ", "-")
     await state.clear()
     await message.answer(
-        f"⚙️ Выбери шаблон для проекта <b>{name}</b>:",
+        f"⚙️ Выбери шаблон для проекта <b>{name}</b> в <code>{PROJECTS_DIR}</code>:",
         reply_markup=get_templates_keyboard(name),
         parse_mode="HTML",
     )
@@ -242,9 +263,9 @@ async def cmd_new_project(message: Message):
     parts = message.text.split()
     if len(parts) == 1:
         await message.answer(
-            "➕ <b>Создание проекта</b>\n\n"
+            f"➕ <b>New Project в <code>{PROJECTS_DIR}</code></b>\n\n"
             "Использование: <code>/new_project &lt;имя&gt; [шаблон]</code>\n"
-            "Доступные шаблоны: <code>python</code>, <code>fastapi</code>, <code>web</code>, <code>empty</code>\n\n"
+            "Шаблоны: <code>python</code>, <code>fastapi</code>, <code>web</code>, <code>empty</code>\n\n"
             "Пример: <code>/new_project my-api fastapi</code>",
             parse_mode="HTML",
         )
@@ -271,14 +292,15 @@ async def show_help(event: Message | CallbackQuery):
     """Show detailed help manual."""
     help_text = (
         "<b>📖 РУКОВОДСТВО ORBITAL BRIDGE</b>\n\n"
-        "🛰️ <b>Основные команды:</b>\n"
-        "• <code>/status</code> — системный дашборд (CPU, RAM, диск, батарея, пинг)\n"
-        "• <code>/screen</code> — моментальный скриншот экрана ноутбука\n"
-        "• <code>/cmd &lt;команда&gt;</code> — выполнить консольную команду в PowerShell\n"
-        "• <code>/new_project &lt;имя&gt;</code> — создать проект с шаблоном и Git\n"
-        "• <code>/projects</code> — список локальных проектов\n"
-        "• <code>/chat &lt;вопрос&gt;</code> — диалог с AI (Gemini)\n\n"
-        "💡 <i>Подсказка:</i> любое текстовое сообщение без слеша бот автоматически отправляет в AI-ассистент!"
+        f"📁 <b>Рабочая папка:</b> <code>{PROJECTS_DIR}</code>\n\n"
+        "🛰️ <b>Интерактивные кнопки и команды:</b>\n"
+        "• <b>🔄 Refresh</b> (<code>/status</code>) — статус ноутбука, CPU, RAM, дисков C:/D:, батареи\n"
+        "• <b>📸 Screenshot</b> (<code>/screen</code>) — моментальный снимок экрана монитора\n"
+        "• <b>📁 Projects</b> (<code>/projects</code>) — список проектов в D:\\Orbital Bridge\n"
+        "• <b>➕ New Project</b> (<code>/new_project &lt;имя&gt;</code>) — генератор проектов с Git\n"
+        "• <b>💬 New conversation</b> (<code>/new_chat</code>) — сброс контекста и старт нового диалога с AI\n"
+        "• <b>💻 /cmd &lt;команда&gt;</b> — запуск PowerShell команд на ноутбуке\n\n"
+        "💡 <i>Диалог с AI:</i> просто пиши боту любой текст, он запоминает контекст беседы!"
     )
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(help_text, reply_markup=get_back_keyboard(), parse_mode="HTML")
@@ -292,21 +314,21 @@ async def cmd_chat(message: Message):
     """Explicit AI chat command."""
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.answer("🤖 Напиши запрос, например: <code>/chat как написать декоратор в Python?</code>", parse_mode="HTML")
+        await message.answer("🤖 Напиши запрос, например: <code>/chat как протестировать сервис?</code>", parse_mode="HTML")
         return
     prompt = parts[1]
     wait_msg = await message.answer("🤔 <i>Обдумываю ответ...</i>", parse_mode="HTML")
-    reply = await ask_gemini(prompt)
+    reply = await ask_gemini(message.from_user.id, prompt)
     await wait_msg.edit_text(reply, parse_mode="HTML")
 
 
 @dp.message()
 async def default_ai_chat(message: Message):
-    """Handle any plain text message as a prompt to AI."""
+    """Handle plain text messages as AI prompts with conversation context."""
     if not message.text:
         return
     wait_msg = await message.answer("🤖 <i>Думаю...</i>", parse_mode="HTML")
-    reply = await ask_gemini(message.text)
+    reply = await ask_gemini(message.from_user.id, message.text)
     await wait_msg.edit_text(reply, parse_mode="HTML")
 
 
@@ -377,8 +399,6 @@ async def main():
     if not BOT_TOKEN:
         print("\n" + "=" * 60)
         print("❌ ОШИБКА: BOT_TOKEN не найден в .env!")
-        print("Открой файл .env и впиши туда токен бота от @BotFather:")
-        print("BOT_TOKEN=1234567890:ABCdefGHI...")
         print("=" * 60 + "\n")
         sys.exit(1)
 
@@ -387,32 +407,19 @@ async def main():
     # Set bot commands menu in Telegram
     try:
         await bot.set_my_commands([
-            BotCommand(command="status", description="📊 Системный дашборд ноутбука"),
-            BotCommand(command="screen", description="📸 Скриншот экрана монитора"),
-            BotCommand(command="cmd", description="💻 Выполнить консольную команду"),
-            BotCommand(command="projects", description="📁 Каталог проектов"),
-            BotCommand(command="new_project", description="➕ Создать новый проект"),
-            BotCommand(command="chat", description="🤖 Задать вопрос AI (Gemini)"),
-            BotCommand(command="help", description="📖 Справка и возможности"),
+            BotCommand(command="status", description="📊 Refresh / Системный статус"),
+            BotCommand(command="screen", description="📸 Screenshot / Снимок экрана"),
+            BotCommand(command="new_chat", description="💬 New conversation / Сброс контекста"),
+            BotCommand(command="projects", description="📁 Projects / Список проектов"),
+            BotCommand(command="new_project", description="➕ New Project / Создать проект"),
+            BotCommand(command="cmd", description="💻 Terminal / Консоль PowerShell"),
+            BotCommand(command="help", description="❓ Help / Справка"),
         ])
     except Exception as e:
         logger.warning(f"Could not register bot commands: {e}")
 
     # Launch Watchdog
     watchdog_bg = asyncio.create_task(watchdog_task(bot))
-
-    # Notify owner about bot start
-    for uid in ALLOWED_USER_IDS:
-        try:
-            await bot.send_message(
-                uid,
-                "🚀 <b>Orbital Bridge успешно запущен на ноутбуке!</b>\n\n"
-                "Системы в сети и готовы к командам.",
-                reply_markup=get_main_keyboard(),
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
 
     logger.info("Orbital Bridge is running. Listening for Telegram updates...")
 

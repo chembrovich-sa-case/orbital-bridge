@@ -1,8 +1,9 @@
 import time
 import datetime
+from pathlib import Path
 import psutil
 import httpx
-from src.config import GEMINI_API_KEY
+from src.config import GEMINI_API_KEY, PROJECTS_DIR
 
 
 def make_bar(percent: float, length: int = 10) -> str:
@@ -78,13 +79,25 @@ async def get_system_dashboard() -> str:
     ram_total_gb = ram.total / (1024**3)
 
     # Disk C:
+    disk_lines = []
     try:
-        disk = psutil.disk_usage("C:\\")
+        disk_c = psutil.disk_usage("C:\\")
+        disk_c_bar = make_bar(disk_c.percent)
+        disk_c_free = disk_c.free / (1024**3)
+        disk_lines.append(f"├─ <b>Диск C:</b> <code>[{disk_c_bar}]</code> {disk_c_free:.1f} GB своб.")
     except Exception:
-        disk = psutil.disk_usage("/")
-    disk_bar = make_bar(disk.percent)
-    disk_free_gb = disk.free / (1024**3)
-    disk_total_gb = disk.total / (1024**3)
+        pass
+
+    # Disk D: (Orbital Bridge projects disk)
+    try:
+        disk_d = psutil.disk_usage("D:\\")
+        disk_d_bar = make_bar(disk_d.percent)
+        disk_d_free = disk_d.free / (1024**3)
+        disk_lines.append(f"├─ <b>Диск D:</b> <code>[{disk_d_bar}]</code> {disk_d_free:.1f} GB своб. <i>(Projects)</i>")
+    except Exception:
+        pass
+
+    disk_section = "\n".join(disk_lines) if disk_lines else "├─ <b>Диск:</b> Доступен"
 
     # Battery
     battery = psutil.sensors_battery()
@@ -94,7 +107,7 @@ async def get_system_dashboard() -> str:
         bat_status = "⚡ Заряжается" if is_charging else "🔋 От батареи"
         bat_str = f"{bat_status} ({bat_percent}%)"
     else:
-        bat_str = "🔌 Питание от сети (ПК/Без батареи)"
+        bat_str = "🔌 Питание от сети"
 
     # Internet check
     net_ok, latency = await check_internet_latency()
@@ -111,11 +124,12 @@ async def get_system_dashboard() -> str:
         "║         ⚡ ORBITAL BRIDGE v1.0       ║\n"
         "╚══════════════════════════════════════╝</code>\n\n"
         f"🟢 <b>Статус:</b> В сети (Online)\n"
-        f"⏱ <b>Uptime ноута:</b> <code>{uptime_str}</code> (Обновлено: {now_str})\n\n"
+        f"⏱ <b>Uptime ноута:</b> <code>{uptime_str}</code> (Обновлено: {now_str})\n"
+        f"📁 <b>Воркспейс:</b> <code>{PROJECTS_DIR}</code>\n\n"
         "<b>💻 СИСТЕМА</b>\n"
         f"├─ <b>CPU:</b>  <code>[{cpu_bar}]</code> {cpu_percent:.1f}% ({cpu_count} ядер)\n"
         f"├─ <b>RAM:</b>  <code>[{ram_bar}]</code> {ram.percent:.1f}% ({ram_used_gb:.1f}/{ram_total_gb:.1f} GB)\n"
-        f"├─ <b>Диск:</b> <code>[{disk_bar}]</code> {disk_free_gb:.1f} GB свободно из {disk_total_gb:.1f} GB\n"
+        f"{disk_section}\n"
         f"└─ <b>Батарея:</b> {bat_str}\n\n"
         "<b>🌐 СЕТЬ И СЕРВИСЫ</b>\n"
         f"├─ <b>Интернет:</b> {net_str}\n"

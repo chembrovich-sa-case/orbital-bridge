@@ -17,9 +17,12 @@ else:
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-# Base directory where /new_project creates projects
-DEFAULT_PROJECTS_DIR = str(ROOT_DIR.parent)
-PROJECTS_DIR = Path(os.getenv("PROJECTS_DIR", DEFAULT_PROJECTS_DIR)).resolve()
+# Base directory where /new_project creates & manages projects
+DEFAULT_PROJECTS_DIR = r"D:\Orbital Bridge"
+env_projects_dir = os.getenv("PROJECTS_DIR", DEFAULT_PROJECTS_DIR).strip() or DEFAULT_PROJECTS_DIR
+PROJECTS_DIR = Path(env_projects_dir).resolve()
+# Ensure target projects directory exists
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Watchdog settings
 WATCHDOG_ENABLED = os.getenv("WATCHDOG_ENABLED", "true").lower() in ("true", "1", "yes")

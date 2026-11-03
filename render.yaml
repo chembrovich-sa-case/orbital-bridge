@@ -1,0 +1,15 @@
+services:
+  - type: worker
+    name: orbital-bridge
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m src.bot
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ALLOWED_USER_IDS
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

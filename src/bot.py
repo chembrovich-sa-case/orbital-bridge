@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
@@ -70,9 +71,9 @@ async def auth_middleware(handler, event, data):
             if isinstance(event, Message):
                 await event.answer(
                     f"⛔ <b>Доступ ограничен</b>\n\n"
-                    f"Этот бот привязан к персональному ноутбуку владельца.\n"
+                    f"Этот бот привязан к персональному аккаунту владельца.\n"
                     f"Твой Telegram ID: <code>{user.id}</code>\n"
-                    f"Чтобы получить доступ, добавь этот ID в <code>ALLOWED_USER_IDS</code> в файле <code>.env</code>."
+                    f"Чтобы получить доступ, добавь этот ID в <code>ALLOWED_USER_IDS</code> в настройках Render / .env."
                 )
             elif isinstance(event, CallbackQuery):
                 await event.answer("⛔ Доступ запрещен", show_alert=True)
@@ -129,10 +130,10 @@ async def handle_restart_ag(event: Message | CallbackQuery):
     """Force restart AG.exe as administrator."""
     message = event if isinstance(event, Message) else event.message
     if isinstance(event, CallbackQuery):
-        await event.answer("⚡ Перезапускаю AG от администратора...")
+        await event.answer("⚡ Перезапускаю AG...")
 
     wait_msg = await message.answer(
-        "⏳ <i>Принудительно перезапускаю Antigravity (AG.exe) от имени администратора...</i>",
+        "⏳ <i>Перезапускаю Antigravity (AG.exe)...</i>",
         parse_mode="HTML",
     )
 
@@ -180,7 +181,7 @@ async def handle_screenshot(event: Message | CallbackQuery):
     if isinstance(event, CallbackQuery):
         await event.answer("📸 Снимаю экран...")
 
-    wait_msg = await message.answer("⏳ <i>Делаю снимок экрана ноутбука...</i>", parse_mode="HTML")
+    wait_msg = await message.answer("⏳ <i>Делаю снимок экрана...</i>", parse_mode="HTML")
     try:
         img_bytes, caption = capture_desktop_screenshot()
         photo = BufferedInputFile(img_bytes, filename="screen.jpg")
@@ -196,7 +197,7 @@ async def cmd_terminal(message: Message):
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "💻 <b>Консоль ноутбука</b>\n\n"
+            "💻 <b>Консоль</b>\n\n"
             "Использование: <code>/cmd &lt;команда&gt;</code>\n"
             "Пример:\n"
             "• <code>/cmd dir</code>\n"
@@ -211,7 +212,7 @@ async def cmd_terminal(message: Message):
     cwd = str(PROJECTS_DIR / active) if (active and (PROJECTS_DIR / active).exists()) else str(PROJECTS_DIR)
 
     status_msg = await message.answer(
-        f"⏳ <i>Выполняю в <code>{cwd}</code>:</i>\n<code>{command}</code>...",
+        f"⏳ <i>Выполняю:</i> <code>{command}</code>...",
         parse_mode="HTML",
     )
     result = await run_terminal_command(command, cwd=cwd)
@@ -358,7 +359,7 @@ async def process_project_name(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
         f"⚙️ Выбери шаблон для проекта <b>{name}</b>:\n\n"
-        "💡 <i>Рекомендуем <b>🚀 FULL Antigravity</b> для полной интеграции в интерфейс Antigravity!</i>",
+        "💡 <i>Рекомендуем <b>🚀 FULL Antigravity</b> для полной интеграции в панель Antigravity!</i>",
         reply_markup=get_templates_keyboard(name),
         parse_mode="HTML",
     )
@@ -371,7 +372,6 @@ async def cb_scaffold(callback: CallbackQuery):
     user = callback.from_user
     result = scaffold_project(proj_name, template)
     if result["success"]:
-        # Set as active project immediately
         set_active_project(user.id, proj_name)
 
         files_str = "\n".join(f"• <code>{f}</code>" for f in result["files"])
@@ -430,13 +430,13 @@ async def show_help(event: Message | CallbackQuery):
         "<b>📖 РУКОВОДСТВО ORBITAL BRIDGE</b>\n\n"
         f"📁 <b>Рабочая папка:</b> <code>{PROJECTS_DIR}</code>\n\n"
         "🛰️ <b>Интерактивные кнопки и команды:</b>\n"
-        "• <b>🔄 Refresh</b> (<code>/status</code>) — статус ноутбука, CPU, RAM, дисков C:/D:, батареи\n"
-        "• <b>⚡ Restart AG</b> (<code>/restart_ag</code>) — перезапуск Antigravity (AG.exe) от администратора\n"
-        "• <b>📸 Screenshot</b> (<code>/screen</code>) — моментальный снимок экрана монитора\n"
-        "• <b>📁 Projects</b> (<code>/projects</code>) — список проектов в D:\\Orbital Bridge и выбор активного\n"
+        "• <b>🔄 Refresh</b> (<code>/status</code>) — статус хоста, CPU, RAM, дисков, батареи\n"
+        "• <b>⚡ Restart AG</b> (<code>/restart_ag</code>) — перезапуск Antigravity (AG.exe)\n"
+        "• <b>📸 Screenshot</b> (<code>/screen</code>) — моментальный снимок экрана\n"
+        "• <b>📁 Projects</b> (<code>/projects</code>) — список проектов и выбор активного\n"
         "• <b>➕ New Project</b> (<code>/new_project &lt;имя&gt;</code>) — генератор проектов с регистрацией в Antigravity\n"
         "• <b>💬 New conversation</b> (<code>/new_chat</code>) — сброс контекста и старт нового диалога с AI\n"
-        "• <b>💻 /cmd &lt;команда&gt;</b> — запуск PowerShell команд в активном проекте\n\n"
+        "• <b>💻 /cmd &lt;команда&gt;</b> — запуск команд в активном проекте\n\n"
         "💡 <i>Диалог с AI:</i> выбери проект в <b>Projects</b>, и бот будет отвечать с учётом его кода и файлов!"
     )
     if isinstance(event, CallbackQuery):
@@ -472,7 +472,7 @@ async def default_ai_chat(message: Message):
 # ------------------- Watchdog Background Loop -------------------
 
 async def watchdog_task(bot: Bot):
-    """Background monitor for battery, network, and AG status."""
+    """Background monitor for battery, network, and host status."""
     if not WATCHDOG_ENABLED or not ALLOWED_USER_IDS:
         logger.info("Watchdog disabled or no allowed users configured.")
         return
@@ -499,7 +499,7 @@ async def watchdog_task(bot: Bot):
                     try:
                         await bot.send_message(
                             uid,
-                            "🌐 <b>Интернет на ноутбуке восстановлен!</b>\nСвязь стабильна.",
+                            "🌐 <b>Интернет на хосте восстановлен!</b>\nСвязь стабильна.",
                             parse_mode="HTML",
                         )
                     except Exception:
@@ -514,7 +514,7 @@ async def watchdog_task(bot: Bot):
                         try:
                             await bot.send_message(
                                 uid,
-                                f"⚠️ <b>Внимание: низкий заряд батареи ноутбука!</b>\n"
+                                f"⚠️ <b>Внимание: низкий заряд батареи!</b>\n"
                                 f"🔋 Осталось: <b>{int(battery.percent)}%</b>\n"
                                 f"Подключи зарядное устройство.",
                                 parse_mode="HTML",
@@ -528,6 +528,17 @@ async def watchdog_task(bot: Bot):
             break
         except Exception as e:
             logger.error(f"Watchdog error: {e}")
+
+
+# ------------------- Render Healthcheck HTTP Server -------------------
+
+async def handle_web_health(request):
+    """HTTP endpoint for Render free tier healthcheck."""
+    return web.Response(
+        text="<h1>⚡ Orbital Bridge is Online</h1><p>Telegram Bot is actively polling.</p>",
+        content_type="text/html",
+        status=200,
+    )
 
 
 # ------------------- Main Entrypoint -------------------
@@ -544,7 +555,7 @@ async def main():
     try:
         await bot.set_my_commands([
             BotCommand(command="status", description="📊 Refresh / Системный статус"),
-            BotCommand(command="restart_ag", description="⚡ Restart AG / Перезапуск Antigravity (Admin)"),
+            BotCommand(command="restart_ag", description="⚡ Restart AG / Перезапуск Antigravity"),
             BotCommand(command="screen", description="📸 Screenshot / Снимок экрана"),
             BotCommand(command="new_chat", description="💬 New conversation / Сброс контекста"),
             BotCommand(command="projects", description="📁 Projects / Список и выбор активного"),
@@ -555,6 +566,23 @@ async def main():
     except Exception as e:
         logger.warning(f"Could not register bot commands: {e}")
 
+    # Launch Render HTTP health server if PORT is provided or on Render
+    port_str = os.getenv("PORT")
+    web_runner = None
+    if port_str:
+        try:
+            port = int(port_str)
+            app = web.Application()
+            app.router.add_get("/", handle_web_health)
+            app.router.add_get("/health", handle_web_health)
+            web_runner = web.AppRunner(app)
+            await web_runner.setup()
+            site = web.TCPSite(web_runner, "0.0.0.0", port)
+            await site.start()
+            logger.info(f"Render HTTP health server started on port {port}")
+        except Exception as e:
+            logger.warning(f"Could not start HTTP health server on port {port_str}: {e}")
+
     watchdog_bg = asyncio.create_task(watchdog_task(bot))
 
     logger.info("Orbital Bridge is running. Listening for Telegram updates...")
@@ -563,6 +591,8 @@ async def main():
         await dp.start_polling(bot)
     finally:
         watchdog_bg.cancel()
+        if web_runner:
+            await web_runner.cleanup()
         await bot.session.close()
 
 

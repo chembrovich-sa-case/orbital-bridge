@@ -55,6 +55,8 @@ $bmp.Dispose()
             )
             if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 1000:
                 img = Image.open(tmp_path)
+                # Load data before deleting file
+                img.load()
                 try:
                     os.remove(tmp_path)
                 except Exception:
@@ -75,6 +77,10 @@ $bmp.Dispose()
             "• Бот запущен в неинтерактивной фоновой сессии\n\n"
             "💡 <b>Решение:</b> открой ноутбук и запусти <code>run.bat</code> прямо на рабочем столе."
         )
+
+    # Convert RGBA to RGB for JPEG compatibility
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
 
     width, height = img.size
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

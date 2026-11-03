@@ -28,12 +28,18 @@ from src.config import (
 from src.dashboard import get_system_dashboard, check_internet_latency
 from src.terminal import run_terminal_command, format_command_output
 from src.screen import capture_desktop_screenshot
-from src.projects import list_projects, scaffold_project
+from src.projects import (
+    list_projects,
+    scaffold_project,
+    get_active_project,
+    set_active_project,
+)
 from src.ai_service import ask_gemini, reset_conversation
 from src.ag_manager import restart_ag_process, get_ag_status
 from src.keyboards import (
     get_main_keyboard,
     get_projects_keyboard,
+    get_project_actions_keyboard,
     get_templates_keyboard,
     get_back_keyboard,
 )
@@ -79,8 +85,11 @@ async def auth_middleware(handler, event, data):
 @dp.message(CommandStart())
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
-    """Show the real-time system dashboard."""
+    """Show the real-time system dashboard with active project info."""
     dashboard = await get_system_dashboard()
+    active = get_active_project(message.from_user.id)
+    if active:
+        dashboard += f"\n\n🎯 <b>Активный проект для диалога:</b> <code>{active}</code>"
     await message.answer(dashboard, reply_markup=get_main_keyboard(), parse_mode="HTML")
 
 
@@ -88,6 +97,9 @@ async def cmd_status(message: Message):
 async def cb_refresh_status(callback: CallbackQuery):
     """Refresh the dashboard."""
     dashboard = await get_system_dashboard()
+    active = get_active_project(callback.from_user.id)
+    if active:
+        dashboard += f"\n\n🎯 <b>Активный проект для диалога:</b> <code>{active}</code>"
     try:
         await callback.message.edit_text(
             dashboard, reply_markup=get_main_keyboard(), parse_mode="HTML"
@@ -102,6 +114,9 @@ async def cb_back_to_menu(callback: CallbackQuery, state: FSMContext):
     """Return to main status dashboard."""
     await state.clear()
     dashboard = await get_system_dashboard()
+    active = get_active_project(callback.from_user.id)
+    if active:
+        dashboard += f"\n\n🎯 <b>Активный проект для диалога:</b> <code>{active}</code>"
     await callback.message.edit_text(
         dashboard, reply_markup=get_main_keyboard(), parse_mode="HTML"
     )
@@ -143,8 +158,10 @@ async def handle_new_conversation(event: Message | CallbackQuery):
     """Reset AI conversation history for fresh chat."""
     user = event.from_user
     cleared = reset_conversation(user.id)
+    active = get_active_project(user.id)
+    proj_str = f" по проекту <b>{active}</b>" if active else ""
     text = (
-        "✨ <b>New Conversation</b>\n\n"
+        f"✨ <b>New Conversation{proj_str}</b>\n\n"
         f"История диалога очищена ({cleared} сообщ.). Контекст обновлен.\n"
         "Задавай новый вопрос или команду — агент готов с чистого листа!"
     )
@@ -170,19 +187,19 @@ async def handle_screenshot(event: Message | CallbackQuery):
         await wait_msg.delete()
         await message.answer_photo(photo, caption=caption, parse_mode="HTML")
     except Exception as e:
-        await wait_msg.edit_text(f"❌ <b>Ошибка захвата экрана:</b>\n<code>{e}</code>", parse_mode="HTML")
+        await wait_msg.edit_text(f"❌ {str(e)}", parse_mode="HTML")
 
 
 @dp.message(Command("cmd"))
 async def cmd_terminal(message: Message):
-    """Execute a shell command locally."""
+    """Execute a shell command locally in active project or projects root."""
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
             "💻 <b>Консоль ноутбука</b>\n\n"
             "Использование: <code>/cmd &lt;команда&gt;</code>\n"
             "Пример:\n"
-            "• <code>/cmd dir \"D:\\Orbital Bridge\"</code>\n"
+            "• <code>/cmd dir</code>\n"
             "• <code>/cmd git status</code>\n"
             "• <code>/cmd python --version</code>",
             parse_mode="HTML",
@@ -190,8 +207,14 @@ async def cmd_terminal(message: Message):
         return
 
     command = parts[1].strip()
-    status_msg = await message.answer(f"⏳ <i>Выполняю:</i> <code>{command}</code>...", parse_mode="HTML")
-    result = await run_terminal_command(command, cwd=str(PROJECTS_DIR))
+    active = get_active_project(message.from_user.id)
+    cwd = str(PROJECTS_DIR / active) if (active and (PROJECTS_DIR / active).exists()) else str(PROJECTS_DIR)
+
+    status_msg = await message.answer(
+        f"⏳ <i>Выполняю в <code>{cwd}</code>:</i>\n<code>{command}</code>...",
+        parse_mode="HTML",
+    )
+    result = await run_terminal_command(command, cwd=cwd)
     formatted = format_command_output(command, result)
     await status_msg.edit_text(formatted, parse_mode="HTML")
 
@@ -199,14 +222,20 @@ async def cmd_terminal(message: Message):
 @dp.message(Command("projects"))
 @dp.callback_query(F.data == "list_projects")
 async def handle_projects(event: Message | CallbackQuery):
-    """List projects in D:\\Orbital Bridge."""
+    """List projects in D:\\Orbital Bridge with active highlight."""
+    user = event.from_user
+    active = get_active_project(user.id)
     projects = list_projects()
+
+    active_info = f"\n🎯 <b>Текущий активный проект:</b> <code>{active}</code>\n" if active else "\n<i>(Активный проект не выбран — выбери из списка ниже)</i>\n"
+
     text = (
         f"📁 <b>Каталог проектов:</b> <code>{PROJECTS_DIR}</code>\n"
-        f"Найдено папок/проектов: <b>{len(projects)}</b>\n\n"
-        "Нажми на проект для подробностей или создай новый:"
+        f"{active_info}\n"
+        f"Всего проектов: <b>{len(projects)}</b>\n"
+        "Выбери проект для управления, настройки или чтения файлов:"
     )
-    keyboard = get_projects_keyboard(projects)
+    keyboard = get_projects_keyboard(projects, active_proj=active)
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
         await event.answer()
@@ -216,7 +245,64 @@ async def handle_projects(event: Message | CallbackQuery):
 
 @dp.callback_query(F.data.startswith("proj_info:"))
 async def cb_project_info(callback: CallbackQuery):
-    """Show details of a specific project."""
+    """Show details of a specific project with management buttons."""
+    proj_name = callback.data.split(":", 1)[1]
+    target_dir = PROJECTS_DIR / proj_name
+    if not target_dir.exists():
+        await callback.answer("Папка не найдена", show_alert=True)
+        return
+
+    user = callback.from_user
+    is_active = (get_active_project(user.id) == proj_name)
+
+    has_git = (target_dir / ".git").exists()
+    has_ag = (target_dir / ".gemini").exists() or (target_dir / "GEMINI.md").exists()
+
+    git_str = "✅ Git подключен" if has_git else "❌ Нет Git"
+    ag_str = "🚀 FULL Antigravity Workspace" if has_ag else "📁 Стандартный проект"
+    active_str = "🎯 <b>АКТИВНЫЙ ПРОЕКТ</b> (сообщения отправляются сюда)" if is_active else "⚪ Не активен"
+
+    text = (
+        f"📂 <b>Проект:</b> <code>{proj_name}</code>\n"
+        f"📍 <b>Путь:</b> <code>{target_dir}</code>\n"
+        f"Статус: {active_str}\n"
+        f"Тип: {ag_str}\n"
+        f"Контроль версий: {git_str}\n\n"
+        "Нажми кнопку ниже, чтобы сделать его активным для диалога:"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_project_actions_keyboard(proj_name, is_active=is_active),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("set_active:"))
+async def cb_set_active(callback: CallbackQuery):
+    """Set active project for this user."""
+    proj_name = callback.data.split(":", 1)[1]
+    user = callback.from_user
+    success = set_active_project(user.id, proj_name)
+    if success:
+        await callback.answer(f"🎯 Проект {proj_name} теперь активен!", show_alert=True)
+        text = (
+            f"🎯 <b>Проект <code>{proj_name}</code> теперь активен!</b>\n\n"
+            f"📍 Путь: <code>{PROJECTS_DIR / proj_name}</code>\n\n"
+            "Теперь все твои сообщения без слеша и команды <code>/cmd</code> будут выполняться в контексте этого проекта!"
+        )
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_project_actions_keyboard(proj_name, is_active=True),
+            parse_mode="HTML",
+        )
+    else:
+        await callback.answer("Ошибка: папка не найдена", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("proj_files:"))
+async def cb_proj_files(callback: CallbackQuery):
+    """Show list of files in project."""
     proj_name = callback.data.split(":", 1)[1]
     target_dir = PROJECTS_DIR / proj_name
     if not target_dir.exists():
@@ -224,19 +310,31 @@ async def cb_project_info(callback: CallbackQuery):
         return
 
     try:
-        files = [f.name for f in target_dir.iterdir()][:20]
+        files = [f.name for f in target_dir.iterdir()][:25]
     except Exception:
         files = []
-    has_git = (target_dir / ".git").exists()
-    git_str = "Да (репозиторий инициализирован)" if has_git else "Нет"
 
     text = (
-        f"📂 <b>Проект:</b> <code>{proj_name}</code>\n"
-        f"📍 <b>Путь:</b> <code>{target_dir}</code>\n"
-        f"🐙 <b>Git:</b> {git_str}\n\n"
-        f"<b>Файлы:</b>\n" + ("\n".join(f"• <code>{f}</code>" for f in files) if files else "<i>(пусто)</i>")
+        f"📄 <b>Файлы проекта <code>{proj_name}</code>:</b>\n"
+        f"📍 <code>{target_dir}</code>\n\n"
+        + ("\n".join(f"• <code>{f}</code>" for f in files) if files else "<i>(папка пуста)</i>")
     )
-    await callback.message.edit_text(text, reply_markup=get_back_keyboard(), parse_mode="HTML")
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_project_actions_keyboard(proj_name, is_active=(get_active_project(callback.from_user.id) == proj_name)),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("proj_git:"))
+async def cb_proj_git(callback: CallbackQuery):
+    """Run git status in project."""
+    proj_name = callback.data.split(":", 1)[1]
+    target_dir = PROJECTS_DIR / proj_name
+    res = await run_terminal_command("git status", cwd=str(target_dir))
+    formatted = format_command_output(f"git status ({proj_name})", res)
+    await callback.message.answer(formatted, parse_mode="HTML")
     await callback.answer()
 
 
@@ -259,7 +357,8 @@ async def process_project_name(message: Message, state: FSMContext):
     name = message.text.strip().replace(" ", "-")
     await state.clear()
     await message.answer(
-        f"⚙️ Выбери шаблон для проекта <b>{name}</b> в <code>{PROJECTS_DIR}</code>:",
+        f"⚙️ Выбери шаблон для проекта <b>{name}</b>:\n\n"
+        "💡 <i>Рекомендуем <b>🚀 FULL Antigravity</b> для полной интеграции в интерфейс Antigravity!</i>",
         reply_markup=get_templates_keyboard(name),
         parse_mode="HTML",
     )
@@ -267,18 +366,24 @@ async def process_project_name(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("scaffold:"))
 async def cb_scaffold(callback: CallbackQuery):
-    """Scaffold the chosen project template."""
+    """Scaffold the chosen project template and set as active."""
     _, proj_name, template = callback.data.split(":")
+    user = callback.from_user
     result = scaffold_project(proj_name, template)
     if result["success"]:
+        # Set as active project immediately
+        set_active_project(user.id, proj_name)
+
         files_str = "\n".join(f"• <code>{f}</code>" for f in result["files"])
         text = (
-            f"🎉 <b>Проект успешно создан!</b>\n\n"
-            f"📁 <b>Имя:</b> <code>{result['name']}</code>\n"
+            f"🎉 <b>Проект успешно создан и зарегистрирован!</b>\n\n"
+            f"📁 <b>Имя:</b> <code>{result['name']}</code> 🎯 <i>(Сделан активным)</i>\n"
             f"📍 <b>Путь:</b> <code>{result['path']}</code>\n"
             f"📦 <b>Шаблон:</b> <code>{result['template']}</code>\n"
+            f"🚀 <b>Antigravity GUI:</b> ✅ Зарегистрирован в панели Antigravity\n"
             f"🐙 <b>Git:</b> {'✅ Инициализирован' if result['git'] else '❌ Не инициализирован'}\n\n"
-            f"<b>Созданные файлы:</b>\n{files_str}"
+            f"<b>Созданные файлы:</b>\n{files_str}\n\n"
+            "💬 <i>Теперь ты можешь сразу писать сообщения боту — они пойдут в этот проект!</i>"
         )
     else:
         text = f"❌ <b>Ошибка создания проекта:</b>\n{result.get('error')}"
@@ -295,20 +400,21 @@ async def cmd_new_project(message: Message):
         await message.answer(
             f"➕ <b>New Project в <code>{PROJECTS_DIR}</code></b>\n\n"
             "Использование: <code>/new_project &lt;имя&gt; [шаблон]</code>\n"
-            "Шаблоны: <code>python</code>, <code>fastapi</code>, <code>web</code>, <code>empty</code>\n\n"
-            "Пример: <code>/new_project my-api fastapi</code>",
+            "Шаблоны: <code>antigravity</code> (рекомендуется), <code>python</code>, <code>fastapi</code>, <code>web</code>, <code>empty</code>\n\n"
+            "Пример: <code>/new_project my-agent antigravity</code>",
             parse_mode="HTML",
         )
         return
 
     name = parts[1]
-    template = parts[2] if len(parts) > 2 else "python"
+    template = parts[2] if len(parts) > 2 else "antigravity"
     result = scaffold_project(name, template)
     if result["success"]:
+        set_active_project(message.from_user.id, name)
         await message.answer(
-            f"🎉 <b>Проект <code>{result['name']}</code> создан!</b>\n"
+            f"🎉 <b>Проект <code>{result['name']}</code> создан и зарегистрирован в Antigravity!</b>\n"
             f"📍 Путь: <code>{result['path']}</code>\n"
-            f"📦 Шаблон: <code>{result['template']}</code>",
+            f"📦 Шаблон: <code>{result['template']}</code> 🎯 <i>(Активен)</i>",
             reply_markup=get_main_keyboard(),
             parse_mode="HTML",
         )
@@ -327,11 +433,11 @@ async def show_help(event: Message | CallbackQuery):
         "• <b>🔄 Refresh</b> (<code>/status</code>) — статус ноутбука, CPU, RAM, дисков C:/D:, батареи\n"
         "• <b>⚡ Restart AG</b> (<code>/restart_ag</code>) — перезапуск Antigravity (AG.exe) от администратора\n"
         "• <b>📸 Screenshot</b> (<code>/screen</code>) — моментальный снимок экрана монитора\n"
-        "• <b>📁 Projects</b> (<code>/projects</code>) — список проектов в D:\\Orbital Bridge\n"
-        "• <b>➕ New Project</b> (<code>/new_project &lt;имя&gt;</code>) — генератор проектов с Git\n"
+        "• <b>📁 Projects</b> (<code>/projects</code>) — список проектов в D:\\Orbital Bridge и выбор активного\n"
+        "• <b>➕ New Project</b> (<code>/new_project &lt;имя&gt;</code>) — генератор проектов с регистрацией в Antigravity\n"
         "• <b>💬 New conversation</b> (<code>/new_chat</code>) — сброс контекста и старт нового диалога с AI\n"
-        "• <b>💻 /cmd &lt;команда&gt;</b> — запуск PowerShell команд на ноутбуке\n\n"
-        "💡 <i>Диалог с AI:</i> напиши боту <i>«перезапусти AG»</i> или любой вопрос — он выполнит команду или ответит через Gemini!"
+        "• <b>💻 /cmd &lt;команда&gt;</b> — запуск PowerShell команд в активном проекте\n\n"
+        "💡 <i>Диалог с AI:</i> выбери проект в <b>Projects</b>, и бот будет отвечать с учётом его кода и файлов!"
     )
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(help_text, reply_markup=get_back_keyboard(), parse_mode="HTML")
@@ -345,7 +451,7 @@ async def cmd_chat(message: Message):
     """Explicit AI chat command."""
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.answer("🤖 Напиши запрос, например: <code>/chat как оптимизировать базу?</code>", parse_mode="HTML")
+        await message.answer("🤖 Напиши запрос, например: <code>/chat как оптимизировать код?</code>", parse_mode="HTML")
         return
     prompt = parts[1]
     wait_msg = await message.answer("🤔 <i>Обдумываю ответ...</i>", parse_mode="HTML")
@@ -355,7 +461,7 @@ async def cmd_chat(message: Message):
 
 @dp.message()
 async def default_ai_chat(message: Message):
-    """Handle plain text messages as AI prompts with conversation context."""
+    """Handle plain text messages as AI prompts with conversation and project context."""
     if not message.text:
         return
     wait_msg = await message.answer("🤖 <i>Думаю...</i>", parse_mode="HTML")
@@ -435,22 +541,20 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
 
-    # Set bot commands menu in Telegram
     try:
         await bot.set_my_commands([
             BotCommand(command="status", description="📊 Refresh / Системный статус"),
             BotCommand(command="restart_ag", description="⚡ Restart AG / Перезапуск Antigravity (Admin)"),
             BotCommand(command="screen", description="📸 Screenshot / Снимок экрана"),
             BotCommand(command="new_chat", description="💬 New conversation / Сброс контекста"),
-            BotCommand(command="projects", description="📁 Projects / Список проектов"),
-            BotCommand(command="new_project", description="➕ New Project / Создать проект"),
-            BotCommand(command="cmd", description="💻 Terminal / Консоль PowerShell"),
+            BotCommand(command="projects", description="📁 Projects / Список и выбор активного"),
+            BotCommand(command="new_project", description="➕ New Project / Создать FULL Antigravity"),
+            BotCommand(command="cmd", description="💻 Terminal / Консоль в активном проекте"),
             BotCommand(command="help", description="❓ Help / Справка"),
         ])
     except Exception as e:
         logger.warning(f"Could not register bot commands: {e}")
 
-    # Launch Watchdog
     watchdog_bg = asyncio.create_task(watchdog_task(bot))
 
     logger.info("Orbital Bridge is running. Listening for Telegram updates...")

@@ -2,7 +2,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def get_main_keyboard() -> InlineKeyboardMarkup:
-    """Generate main interactive inline keyboard with user-requested buttons."""
+    """Generate main interactive inline keyboard with AG control."""
     buttons = [
         [
             InlineKeyboardButton(text="🔄 Refresh", callback_data="refresh_status"),
@@ -13,6 +13,7 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="➕ New Project", callback_data="prompt_new_project"),
         ],
         [
+            InlineKeyboardButton(text="⚡ Restart AG (Admin)", callback_data="restart_ag"),
             InlineKeyboardButton(text="💬 New conversation", callback_data="new_conversation"),
         ],
         [

@@ -30,6 +30,7 @@ from src.terminal import run_terminal_command, format_command_output
 from src.screen import capture_desktop_screenshot
 from src.projects import list_projects, scaffold_project
 from src.ai_service import ask_gemini, reset_conversation
+from src.ag_manager import restart_ag_process, get_ag_status
 from src.keyboards import (
     get_main_keyboard,
     get_projects_keyboard,
@@ -107,6 +108,35 @@ async def cb_back_to_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@dp.message(Command("restart_ag"))
+@dp.callback_query(F.data == "restart_ag")
+async def handle_restart_ag(event: Message | CallbackQuery):
+    """Force restart AG.exe as administrator."""
+    message = event if isinstance(event, Message) else event.message
+    if isinstance(event, CallbackQuery):
+        await event.answer("⚡ Перезапускаю AG от администратора...")
+
+    wait_msg = await message.answer(
+        "⏳ <i>Принудительно перезапускаю Antigravity (AG.exe) от имени администратора...</i>",
+        parse_mode="HTML",
+    )
+
+    result = await restart_ag_process(as_admin=True)
+
+    if result["success"]:
+        text = (
+            f"🎉 <b>Antigravity успешно перезапущен!</b>\n\n"
+            f"📍 Файл: <code>D:\\Orbital Bridge\\AG.exe</code>\n"
+            f"🆔 PID: <code>{result['pid']}</code>\n"
+            f"📊 Память: <code>{result.get('memory_mb', 0)} MB</code>\n"
+            f"🛡️ Права: <b>Administrator (Elevated)</b>"
+        )
+    else:
+        text = f"⚠️ <b>Результат операции:</b>\n{result['message']}"
+
+    await wait_msg.edit_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+
+
 @dp.message(Command("new_chat"))
 @dp.callback_query(F.data == "new_conversation")
 async def handle_new_conversation(event: Message | CallbackQuery):
@@ -116,7 +146,7 @@ async def handle_new_conversation(event: Message | CallbackQuery):
     text = (
         "✨ <b>New Conversation</b>\n\n"
         f"История диалога очищена ({cleared} сообщ.). Контекст обновлен.\n"
-        "Задавай новый вопрос или ставь задачу — агент готов с чистого листа!"
+        "Задавай новый вопрос или команду — агент готов с чистого листа!"
     )
     if isinstance(event, CallbackQuery):
         await event.answer("💬 Новый диалог начат!")
@@ -295,12 +325,13 @@ async def show_help(event: Message | CallbackQuery):
         f"📁 <b>Рабочая папка:</b> <code>{PROJECTS_DIR}</code>\n\n"
         "🛰️ <b>Интерактивные кнопки и команды:</b>\n"
         "• <b>🔄 Refresh</b> (<code>/status</code>) — статус ноутбука, CPU, RAM, дисков C:/D:, батареи\n"
+        "• <b>⚡ Restart AG</b> (<code>/restart_ag</code>) — перезапуск Antigravity (AG.exe) от администратора\n"
         "• <b>📸 Screenshot</b> (<code>/screen</code>) — моментальный снимок экрана монитора\n"
         "• <b>📁 Projects</b> (<code>/projects</code>) — список проектов в D:\\Orbital Bridge\n"
         "• <b>➕ New Project</b> (<code>/new_project &lt;имя&gt;</code>) — генератор проектов с Git\n"
         "• <b>💬 New conversation</b> (<code>/new_chat</code>) — сброс контекста и старт нового диалога с AI\n"
         "• <b>💻 /cmd &lt;команда&gt;</b> — запуск PowerShell команд на ноутбуке\n\n"
-        "💡 <i>Диалог с AI:</i> просто пиши боту любой текст, он запоминает контекст беседы!"
+        "💡 <i>Диалог с AI:</i> напиши боту <i>«перезапусти AG»</i> или любой вопрос — он выполнит команду или ответит через Gemini!"
     )
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(help_text, reply_markup=get_back_keyboard(), parse_mode="HTML")
@@ -314,7 +345,7 @@ async def cmd_chat(message: Message):
     """Explicit AI chat command."""
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.answer("🤖 Напиши запрос, например: <code>/chat как протестировать сервис?</code>", parse_mode="HTML")
+        await message.answer("🤖 Напиши запрос, например: <code>/chat как оптимизировать базу?</code>", parse_mode="HTML")
         return
     prompt = parts[1]
     wait_msg = await message.answer("🤔 <i>Обдумываю ответ...</i>", parse_mode="HTML")
@@ -335,7 +366,7 @@ async def default_ai_chat(message: Message):
 # ------------------- Watchdog Background Loop -------------------
 
 async def watchdog_task(bot: Bot):
-    """Background monitor for battery and network stability."""
+    """Background monitor for battery, network, and AG status."""
     if not WATCHDOG_ENABLED or not ALLOWED_USER_IDS:
         logger.info("Watchdog disabled or no allowed users configured.")
         return
@@ -408,6 +439,7 @@ async def main():
     try:
         await bot.set_my_commands([
             BotCommand(command="status", description="📊 Refresh / Системный статус"),
+            BotCommand(command="restart_ag", description="⚡ Restart AG / Перезапуск Antigravity (Admin)"),
             BotCommand(command="screen", description="📸 Screenshot / Снимок экрана"),
             BotCommand(command="new_chat", description="💬 New conversation / Сброс контекста"),
             BotCommand(command="projects", description="📁 Projects / Список проектов"),

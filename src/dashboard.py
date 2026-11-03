@@ -4,6 +4,7 @@ from pathlib import Path
 import psutil
 import httpx
 from src.config import GEMINI_API_KEY, PROJECTS_DIR
+from src.ag_manager import get_ag_status
 
 
 def make_bar(percent: float, length: int = 10) -> str:
@@ -109,6 +110,13 @@ async def get_system_dashboard() -> str:
     else:
         bat_str = "🔌 Питание от сети"
 
+    # Antigravity (AG.exe) check
+    ag_stat = get_ag_status()
+    if ag_stat["running"]:
+        ag_str = f"🟢 Работает (PID: <code>{ag_stat['pid']}</code>, {ag_stat['memory_mb']} MB)"
+    else:
+        ag_str = "🔴 Остановлен / Завис"
+
     # Internet check
     net_ok, latency = await check_internet_latency()
     net_str = f"🟢 {latency} ms (Стабильно)" if net_ok else "🔴 Оффлайн / Нет связи"
@@ -131,9 +139,10 @@ async def get_system_dashboard() -> str:
         f"├─ <b>RAM:</b>  <code>[{ram_bar}]</code> {ram.percent:.1f}% ({ram_used_gb:.1f}/{ram_total_gb:.1f} GB)\n"
         f"{disk_section}\n"
         f"└─ <b>Батарея:</b> {bat_str}\n\n"
-        "<b>🌐 СЕТЬ И СЕРВИСЫ</b>\n"
-        f"├─ <b>Интернет:</b> {net_str}\n"
+        "<b>🌐 СВЯЗЬ И СЕРВИСЫ</b>\n"
+        f"├─ <b>Antigravity (AG):</b> {ag_str}\n"
         f"├─ <b>Gemini AI:</b> {gem_str}\n"
+        f"├─ <b>Интернет:</b> {net_str}\n"
         f"└─ <b>Режим:</b> 🛡️ <code>Full Access (Owner Only)</code>"
     )
     return dashboard
